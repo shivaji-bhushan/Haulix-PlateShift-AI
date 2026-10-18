@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+env/
+.venv/
+ENV/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.pytest_cache/
+
+# Executables & Binaries
+cloudflared.exe
+*.exe
+
+# System & OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor settings
+.vscode/
+.idea/
+
+# Large model cache directories
+models/.cache/
+models/huggingface/
+models/best.pt

@@ -1,0 +1,19 @@
+# Core Web Framework
+flask>=3.0.0
+werkzeug>=3.0.0
+
+# Computer Vision & Deep Learning
+opencv-python>=4.8.0
+pillow>=10.0.0
+numpy>=1.24.0
+
+# YOLO Detection & HuggingFace Model Weights
+ultralytics>=8.0.0
+huggingface_hub>=0.20.0
+
+# Optical Character Recognition (Self-hosted, CPU-friendly)
+easyocr>=1.7.0
+
+# Presentation & Report Generation
+python-pptx>=1.0.0
+markdown>=3.5.0
