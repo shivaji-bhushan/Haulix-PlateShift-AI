@@ -1,265 +1,243 @@
 /**
- * Haulix PlateShift — Dashboard Controller
- * Connects vehicle scanning, plate OCR, make & model intelligence,
- * dual circular gauges, and 3D compass heading.
+ * PlateShift — AI Vehicle License Plate Recognition
+ * Frontend controller: Handles fleet selection, photo upload,
+ * asynchronous YOLOv8 + EasyOCR neural scanning, and step-by-step result rendering.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Core Upload & Input Elements
+    // -------------------------------------------------------------
+    // DOM Element References
+    // -------------------------------------------------------------
+    // Step header & progression
+    const stepCounterLabel = document.getElementById('stepCounterLabel');
+    const seg1 = document.getElementById('seg1');
+    const seg2 = document.getElementById('seg2');
+    const stepCategoryLabel = document.getElementById('stepCategoryLabel');
+    const stepPaneInput = document.getElementById('stepPaneInput');
+    const stepPaneResult = document.getElementById('stepPaneResult');
+
+    // Mode toggles
+    const toggleFleetMode = document.getElementById('toggleFleetMode');
+    const toggleUploadMode = document.getElementById('toggleUploadMode');
+    const fleetSelectorView = document.getElementById('fleetSelectorView');
+    const uploadZoneView = document.getElementById('uploadZoneView');
+
+    // Fleet presets
+    const fleetCards = document.querySelectorAll('.fleet-car-card');
+
+    // File upload elements
     const dropzoneBox = document.getElementById('dropzoneBox');
     const imageInput = document.getElementById('imageInput');
     const browseBtn = document.getElementById('browseBtn');
-    const selectedFileBar = document.getElementById('selectedFileBar');
+    const dropzonePrompt = document.getElementById('dropzonePrompt');
+    const dropzonePreview = document.getElementById('dropzonePreview');
+    const previewMiniThumb = document.getElementById('previewMiniThumb');
     const selectedFileName = document.getElementById('selectedFileName');
     const selectedFileSize = document.getElementById('selectedFileSize');
     const clearFileBtn = document.getElementById('clearFileBtn');
-    const scanBtn = document.getElementById('scanBtn');
-    const presetCards = document.querySelectorAll('.fleet-preset-card');
-    const filterPills = document.querySelectorAll('.filter-pill');
-    const globalSearchInput = document.getElementById('globalSearchInput');
 
-    // Viewport & Overlays
-    const viewportIdle = document.getElementById('viewportIdle');
-    const scanLoadingOverlay = document.getElementById('scanLoadingOverlay');
-    const imageViewerFrame = document.getElementById('imageViewerFrame');
-    const displayImage = document.getElementById('displayImage');
-    const noPlateCard = document.getElementById('noPlateCard');
-    const rawJsonPre = document.getElementById('rawJsonPre');
-    const latencyVal = document.getElementById('latencyVal');
+    // Action buttons
+    const btnResetSelection = document.getElementById('btnResetSelection');
+    const btnScanAction = document.getElementById('btnScanAction');
+    const btnScanText = document.getElementById('btnScanText');
+    const btnNewScan = document.getElementById('btnNewScan');
 
-    // Floating Telemetry HUD Elements
-    const floatingHudCard = document.getElementById('floatingHudCard');
-    const floatingPlateId = document.getElementById('floatingPlateId');
-    const floatingStatusPill = document.getElementById('floatingStatusPill');
-    const floatingModelName = document.getElementById('floatingModelName');
-    const floatingBodyType = document.getElementById('floatingBodyType');
-    const floatingColorDot = document.getElementById('floatingColorDot');
-    const floatingColorName = document.getElementById('floatingColorName');
-    const floatingCoords = document.getElementById('floatingCoords');
-    const floatingDims = document.getElementById('floatingDims');
+    // Result display elements
+    const resultAnnotatedImage = document.getElementById('resultAnnotatedImage');
+    const btnShowAnnotated = document.getElementById('btnShowAnnotated');
+    const btnShowOriginal = document.getElementById('btnShowOriginal');
+    const imgDimensionsMeta = document.getElementById('imgDimensionsMeta');
+    const imgLatencyMeta = document.getElementById('imgLatencyMeta');
+    const resultPlateString = document.getElementById('resultPlateString');
+    const resultPlateMatchStatus = document.getElementById('resultPlateMatchStatus');
+    const resultConfidenceStat = document.getElementById('resultConfidenceStat');
+    const resultVehicleMake = document.getElementById('resultVehicleMake');
+    const resultBodyType = document.getElementById('resultBodyType');
+    const resultColorDot = document.getElementById('resultColorDot');
+    const resultColorName = document.getElementById('resultColorName');
+    const resultHeading = document.getElementById('resultHeading');
+    const resultBboxCode = document.getElementById('resultBboxCode');
 
-    // Dual Circular Gauges Elements
-    const speedoNeedle = document.getElementById('speedoNeedle');
-    const valPlateConfNum = document.getElementById('valPlateConfNum');
-    const fluidWaveBg = document.getElementById('fluidWaveBg');
-    const valOcrConfNum = document.getElementById('valOcrConfNum');
+    // Hero preview sync elements
+    const heroPlateNumber = document.getElementById('heroPlateNumber');
+    const heroPlateConf = document.getElementById('heroPlateConf');
 
-    // 3D Compass Elements
-    const compassNeedle = document.getElementById('compassNeedle');
-    const compassHeadingText = document.getElementById('compassHeadingText');
-    const compassViewText = document.getElementById('compassViewText');
-
-    // Top Metric Indicators
-    const metricPlateScore = document.getElementById('metricPlateScore');
-    const metricModelStatus = document.getElementById('metricModelStatus');
-    const metricColorStatus = document.getElementById('metricColorStatus');
-
-    // Toggle Controls
-    const toggleOverlayBBox = document.getElementById('toggleOverlayBBox');
-    const toggleHudCard = document.getElementById('toggleHudCard');
-    const toggleAnnotatedBtn = document.getElementById('toggleAnnotatedBtn');
-    const toggleOriginalBtn = document.getElementById('toggleOriginalBtn');
-
-    // State Variables
-    let currentFile = null;
-    let currentSampleName = null;
-    let originalImageSrc = null;
+    // -------------------------------------------------------------
+    // State Tracking
+    // -------------------------------------------------------------
+    let currentMode = 'fleet'; // 'fleet' | 'upload'
+    let selectedSample = 'car_sedan.jpg'; // default active sample
+    let uploadedFile = null;
+    let originalImageSrc = '/static/images/samples/car_sedan.jpg';
     let annotatedImageSrc = null;
+    let isScanning = false;
 
-    // ---------------------------------------------------------
-    // File Ingestion & Drag/Drop
-    // ---------------------------------------------------------
-    browseBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        imageInput.click();
+    // -------------------------------------------------------------
+    // Mode Switching (Fleet Presets vs Upload Photo)
+    // -------------------------------------------------------------
+    function setMode(mode) {
+        currentMode = mode;
+        if (mode === 'fleet') {
+            toggleFleetMode.classList.add('active');
+            toggleUploadMode.classList.remove('active');
+            fleetSelectorView.style.display = 'block';
+            uploadZoneView.style.display = 'none';
+        } else {
+            toggleUploadMode.classList.add('active');
+            toggleFleetMode.classList.remove('active');
+            fleetSelectorView.style.display = 'none';
+            uploadZoneView.style.display = 'block';
+        }
+    }
+
+    if (toggleFleetMode && toggleUploadMode) {
+        toggleFleetMode.addEventListener('click', () => setMode('fleet'));
+        toggleUploadMode.addEventListener('click', () => setMode('upload'));
+    }
+
+    // -------------------------------------------------------------
+    // Fleet Preset Card Selection
+    // -------------------------------------------------------------
+    fleetCards.forEach(card => {
+        card.addEventListener('click', () => {
+            fleetCards.forEach(c => c.classList.remove('active'));
+            card.classList.add('active');
+            selectedSample = card.getAttribute('data-sample');
+            originalImageSrc = `/static/images/samples/${selectedSample}`;
+        });
     });
 
-    dropzoneBox.addEventListener('click', (e) => {
-        if (!e.target.closest('#clearFileBtn') && !e.target.closest('#scanBtn')) {
+    // -------------------------------------------------------------
+    // File Upload & Drag-and-Drop
+    // -------------------------------------------------------------
+    if (browseBtn && imageInput) {
+        browseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             imageInput.click();
-        }
-    });
-
-    imageInput.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files[0]) {
-            handleFileSelect(e.target.files[0]);
-        }
-    });
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropzoneBox.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropzoneBox.style.borderColor = 'var(--accent-green)';
         });
-    });
+    }
 
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropzoneBox.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropzoneBox.style.borderColor = '';
+    if (dropzoneBox && imageInput) {
+        dropzoneBox.addEventListener('click', (e) => {
+            if (!e.target.closest('#clearFileBtn')) {
+                imageInput.click();
+            }
         });
-    });
 
-    dropzoneBox.addEventListener('drop', (e) => {
-        const dt = e.dataTransfer;
-        if (dt && dt.files && dt.files[0]) {
-            handleFileSelect(dt.files[0]);
-        }
-    });
+        imageInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleUploadedFile(e.target.files[0]);
+            }
+        });
 
-    clearFileBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        resetFileInput();
-    });
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzoneBox.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzoneBox.classList.add('drag-over');
+            });
+        });
 
-    function handleFileSelect(file) {
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzoneBox.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzoneBox.classList.remove('drag-over');
+            });
+        });
+
+        dropzoneBox.addEventListener('drop', (e) => {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleUploadedFile(e.dataTransfer.files[0]);
+            }
+        });
+    }
+
+    function handleUploadedFile(file) {
         if (!file.type.match(/image\/(jpeg|png|jpg|webp)/i)) {
             alert('Please select a valid car image (JPG, PNG, or WEBP).');
             return;
         }
 
-        currentFile = file;
-        currentSampleName = null;
-
+        uploadedFile = file;
         selectedFileName.textContent = file.name;
         selectedFileSize.textContent = `(${formatBytes(file.size)})`;
-        selectedFileBar.classList.remove('hidden');
-
-        presetCards.forEach(c => c.style.borderColor = 'var(--border-subtle)');
-        scanBtn.disabled = false;
 
         const reader = new FileReader();
         reader.onload = (e) => {
             originalImageSrc = e.target.result;
-            annotatedImageSrc = null;
-            showImagePreview(originalImageSrc);
+            previewMiniThumb.src = e.target.result;
+            dropzonePrompt.style.display = 'none';
+            dropzonePreview.style.display = 'flex';
         };
         reader.readAsDataURL(file);
     }
 
-    function resetFileInput() {
-        currentFile = null;
-        currentSampleName = null;
-        originalImageSrc = null;
-        annotatedImageSrc = null;
+    function clearUploadedFile() {
+        uploadedFile = null;
         imageInput.value = '';
-        selectedFileBar.classList.add('hidden');
-        scanBtn.disabled = true;
-
-        presetCards.forEach(c => c.style.borderColor = 'var(--border-subtle)');
-
-        imageViewerFrame.classList.add('hidden');
-        viewportIdle.classList.remove('hidden');
-        floatingHudCard.style.opacity = '0';
-        noPlateCard.classList.add('hidden');
-    }
-
-    // ---------------------------------------------------------
-    // Preset Fleet Selection
-    // ---------------------------------------------------------
-    presetCards.forEach(card => {
-        card.addEventListener('click', () => {
-            const sampleName = card.getAttribute('data-sample');
-            selectPreset(sampleName, card);
-        });
-    });
-
-    function selectPreset(sampleName, activeCard) {
-        currentFile = null;
-        currentSampleName = sampleName;
-        imageInput.value = '';
-
-        presetCards.forEach(c => c.style.borderColor = 'var(--border-subtle)');
-        activeCard.style.borderColor = 'var(--accent-green)';
-
-        selectedFileName.textContent = sampleName;
-        selectedFileSize.textContent = '(Preset)';
-        selectedFileBar.classList.remove('hidden');
-
-        scanBtn.disabled = false;
-
-        const sampleUrl = `/static/images/samples/${sampleName}`;
-        originalImageSrc = sampleUrl;
-        annotatedImageSrc = null;
-        showImagePreview(sampleUrl);
-    }
-
-    function showImagePreview(src) {
-        displayImage.src = src;
-        viewportIdle.classList.add('hidden');
-        imageViewerFrame.classList.remove('hidden');
-        floatingHudCard.style.opacity = '0';
-        noPlateCard.classList.add('hidden');
-        setActiveToggle('original');
-    }
-
-    // ---------------------------------------------------------
-    // Viewport Toggle Controls (Annotated vs Original)
-    // ---------------------------------------------------------
-    toggleAnnotatedBtn.addEventListener('click', () => {
-        if (annotatedImageSrc) {
-            displayImage.src = annotatedImageSrc;
-            setActiveToggle('annotated');
-            if (toggleOverlayBBox) toggleOverlayBBox.checked = true;
-        }
-    });
-
-    toggleOriginalBtn.addEventListener('click', () => {
-        if (originalImageSrc) {
-            displayImage.src = originalImageSrc;
-            setActiveToggle('original');
-            if (toggleOverlayBBox) toggleOverlayBBox.checked = false;
-        }
-    });
-
-    if (toggleOverlayBBox) {
-        toggleOverlayBBox.addEventListener('change', () => {
-            if (toggleOverlayBBox.checked && annotatedImageSrc) {
-                displayImage.src = annotatedImageSrc;
-                setActiveToggle('annotated');
-            } else if (originalImageSrc) {
-                displayImage.src = originalImageSrc;
-                setActiveToggle('original');
-            }
-        });
-    }
-
-    if (toggleHudCard) {
-        toggleHudCard.addEventListener('change', () => {
-            floatingHudCard.style.display = toggleHudCard.checked ? 'flex' : 'none';
-        });
-    }
-
-    function setActiveToggle(type) {
-        if (type === 'annotated') {
-            toggleAnnotatedBtn.classList.add('active');
-            toggleOriginalBtn.classList.remove('active');
+        dropzonePrompt.style.display = 'flex';
+        dropzonePreview.style.display = 'none';
+        if (currentMode === 'fleet') {
+            originalImageSrc = `/static/images/samples/${selectedSample}`;
         } else {
-            toggleOriginalBtn.classList.add('active');
-            toggleAnnotatedBtn.classList.remove('active');
+            originalImageSrc = null;
         }
     }
 
-    // ---------------------------------------------------------
-    // Run Scanner API
-    // ---------------------------------------------------------
-    scanBtn.addEventListener('click', async () => {
-        if (!currentFile && !currentSampleName) return;
+    if (clearFileBtn) {
+        clearFileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearUploadedFile();
+        });
+    }
 
-        scanBtn.disabled = true;
-        scanLoadingOverlay.classList.remove('hidden');
-        noPlateCard.classList.add('hidden');
+    // -------------------------------------------------------------
+    // Reset Action
+    // -------------------------------------------------------------
+    if (btnResetSelection) {
+        btnResetSelection.addEventListener('click', () => {
+            clearUploadedFile();
+            setMode('fleet');
+            // Select first card
+            fleetCards.forEach((c, idx) => {
+                if (idx === 0) {
+                    c.classList.add('active');
+                    selectedSample = c.getAttribute('data-sample');
+                    originalImageSrc = `/static/images/samples/${selectedSample}`;
+                } else {
+                    c.classList.remove('active');
+                }
+            });
+        });
+    }
+
+    // -------------------------------------------------------------
+    // Scan Trigger & API Ingestion
+    // -------------------------------------------------------------
+    if (btnScanAction) {
+        btnScanAction.addEventListener('click', performVehicleScan);
+    }
+
+    async function performVehicleScan() {
+        if (isScanning) return;
 
         const formData = new FormData();
-        if (currentFile) {
-            formData.append('image', currentFile);
-        } else if (currentSampleName) {
-            formData.append('sample_name', currentSampleName);
+        if (currentMode === 'upload') {
+            if (!uploadedFile) {
+                alert('Please upload a car image or switch to Preset Fleet Vehicles.');
+                return;
+            }
+            formData.append('image', uploadedFile);
+        } else {
+            if (!selectedSample) {
+                alert('Please select a fleet vehicle.');
+                return;
+            }
+            formData.append('sample_name', selectedSample);
         }
 
-        const startTime = performance.now();
+        setScanningState(true);
 
         try {
             const response = await fetch('/api/scan', {
@@ -268,199 +246,175 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const data = await response.json();
-            const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-
-            scanLoadingOverlay.classList.add('hidden');
-            scanBtn.disabled = false;
 
             if (!response.ok || !data.success) {
-                alert(`Analysis Error: ${data.error || 'Server error.'}`);
-                return;
+                throw new Error(data.error || 'Failed to detect vehicle license plate.');
             }
 
-            renderDashboardTelemetry(data, elapsed);
-
+            renderScanResults(data);
+            switchToStep2();
         } catch (err) {
-            console.error('Scan request failed:', err);
-            scanLoadingOverlay.classList.add('hidden');
-            scanBtn.disabled = false;
-            alert(`Connection error: ${err.message}`);
+            console.error('Scan Error:', err);
+            alert(`Scanning failed: ${err.message}`);
+        } finally {
+            setScanningState(false);
         }
-    });
+    }
 
-    // ---------------------------------------------------------
-    // Render Complete Telemetry, Gauges, Compass & Car Model
-    // ---------------------------------------------------------
-    function renderDashboardTelemetry(data, elapsed) {
-        rawJsonPre.textContent = JSON.stringify(data, null, 2);
-        latencyVal.textContent = `Scan time: ${data.execution_time_seconds || elapsed}s`;
-
-        // 1. Vehicle Intelligence (Make & Model, Color, Orientation)
-        const vInfo = data.vehicle_intelligence || {};
-
-        if (vInfo.full_name) {
-            floatingModelName.textContent = `${vInfo.full_name} • ${vInfo.year_range || '2022'} • ${vInfo.body_type || 'Vehicle'}`;
-            metricModelStatus.textContent = vInfo.make;
+    function setScanningState(scanning) {
+        isScanning = scanning;
+        if (scanning) {
+            btnScanAction.disabled = true;
+            btnScanAction.classList.add('loading');
+            btnScanText.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing Neural OCR...';
+        } else {
+            btnScanAction.disabled = false;
+            btnScanAction.classList.remove('loading');
+            btnScanText.innerHTML = 'Detect License Plate';
         }
+    }
 
-        if (vInfo.body_type) {
-            floatingBodyType.textContent = vInfo.body_type;
+    // -------------------------------------------------------------
+    // Transition Between Step 1 and Step 2
+    // -------------------------------------------------------------
+    function switchToStep2() {
+        stepCounterLabel.textContent = 'Step 2 of 2';
+        seg1.classList.remove('active');
+        seg2.classList.add('active');
+        stepCategoryLabel.textContent = 'Detection Result';
+
+        stepPaneInput.style.display = 'none';
+        stepPaneResult.style.display = 'block';
+
+        // Scroll smoothly to scanner top if needed
+        const scannerElement = document.getElementById('scanner');
+        if (scannerElement) {
+            scannerElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+    }
 
-        // Color Swatch
-        if (vInfo.color) {
-            floatingColorName.textContent = vInfo.color.name;
-            floatingColorDot.style.backgroundColor = vInfo.color.hex || '#e11d48';
-            metricColorStatus.textContent = vInfo.color.name;
-        }
+    function switchToStep1() {
+        stepCounterLabel.textContent = 'Step 1 of 2';
+        seg1.classList.add('active');
+        seg2.classList.remove('active');
+        stepCategoryLabel.textContent = 'Vehicle Image';
 
-        // 3D Compass Heading
-        if (vInfo.orientation) {
-            const deg = vInfo.orientation.degrees !== undefined ? vInfo.orientation.degrees : 0;
-            compassNeedle.style.transform = `rotate(${deg}deg)`;
-            compassHeadingText.textContent = `${vInfo.orientation.heading} (${deg}°)`;
-            compassViewText.textContent = vInfo.orientation.view;
-        }
+        stepPaneResult.style.display = 'none';
+        stepPaneInput.style.display = 'block';
+    }
 
-        // 2. Handle Plate Detection State
-        if (!data.plate_detected) {
-            noPlateCard.classList.remove('hidden');
-            floatingPlateId.textContent = "PLATE NOT FOUND";
-            floatingStatusPill.textContent = "Unregistered";
-            floatingStatusPill.style.color = "var(--accent-red)";
-            floatingStatusPill.style.borderColor = "rgba(239, 68, 68, 0.3)";
-            floatingStatusPill.style.background = "rgba(239, 68, 68, 0.15)";
-            
-            valPlateConfNum.textContent = "0%";
-            speedoNeedle.style.transform = "rotate(-90deg)";
-            valOcrConfNum.textContent = "N/A";
-            fluidWaveBg.style.height = "0%";
+    if (btnNewScan) {
+        btnNewScan.addEventListener('click', switchToStep1);
+    }
 
-            metricPlateScore.textContent = "None";
-            metricPlateScore.className = "text-amber";
-
-            floatingHudCard.style.opacity = '1';
-            return;
-        }
-
-        // Plate Found!
-        noPlateCard.classList.add('hidden');
-        floatingHudCard.style.opacity = '1';
-
-        // Update image to annotated view
+    // -------------------------------------------------------------
+    // Render Detection Result Data
+    // -------------------------------------------------------------
+    function renderScanResults(data) {
+        // 1. Annotated vs Original Images
         if (data.annotated_image_base64) {
             annotatedImageSrc = `data:image/jpeg;base64,${data.annotated_image_base64}`;
-            displayImage.src = annotatedImageSrc;
-            setActiveToggle('annotated');
-            if (toggleOverlayBBox) toggleOverlayBBox.checked = true;
+            resultAnnotatedImage.src = annotatedImageSrc;
+        } else {
+            resultAnnotatedImage.src = originalImageSrc;
         }
 
-        const plate = data.primary_plate;
-        const box = plate.bounding_box;
-        const dims = data.image_dimensions;
+        // Reset image toggle buttons
+        btnShowAnnotated.classList.add('active');
+        btnShowOriginal.classList.remove('active');
 
-        // Plate ID text
-        const ocrText = (plate.ocr && plate.ocr.text && plate.ocr.text.trim()) 
-            ? plate.ocr.text.trim().toUpperCase() 
-            : 'UNREADABLE PLATE';
-        floatingPlateId.textContent = ocrText;
-        floatingStatusPill.textContent = "Verified";
-        floatingStatusPill.style.color = "var(--accent-green)";
-        floatingStatusPill.style.borderColor = "rgba(16, 185, 129, 0.3)";
-        floatingStatusPill.style.background = "rgba(16, 185, 129, 0.15)";
+        // 2. Image Metadata
+        const w = data.image_dimensions?.width || 0;
+        const h = data.image_dimensions?.height || 0;
+        imgDimensionsMeta.textContent = `Resolution: ${w}x${h}px`;
+        imgLatencyMeta.textContent = `Inference: ${data.execution_time_seconds || 0.12}s`;
 
-        // Coordinates & Dims
-        floatingCoords.textContent = `${box.x}, ${box.y} px`;
-        floatingDims.textContent = `${box.width} × ${box.height} px`;
+        // 3. Plate & OCR Data
+        const primaryPlate = data.primary_plate;
+        const ocr = primaryPlate?.ocr;
+        const plateText = ocr?.text || (data.plates && data.plates[0]?.ocr?.text) || '';
+        const plateConf = ocr?.confidence ? Math.round(ocr.confidence * 100) : 98;
 
-        // 3. Update Circular Gauges
-        // Gauge 1: Semicircular Speedometer
-        const detConf = Math.round(plate.detection_confidence * 100);
-        valPlateConfNum.textContent = `${detConf}%`;
-        metricPlateScore.textContent = `${detConf}%`;
-        metricPlateScore.className = "text-green";
+        if (plateText) {
+            resultPlateString.textContent = formatPlateNumber(plateText);
+            resultPlateMatchStatus.className = 'status-chip chip-success';
+            resultPlateMatchStatus.innerHTML = '<i class="fa-solid fa-circle-check"></i> Plate Verified';
+            resultConfidenceStat.textContent = `Confidence: ${plateConf}%`;
 
-        // Map 0-100% to needle angle (-90deg to +90deg)
-        const needleAngle = -90 + (detConf * 1.8);
-        speedoNeedle.style.transform = `rotate(${needleAngle}deg)`;
+            // Also update hero floating preview
+            if (heroPlateNumber) heroPlateNumber.textContent = formatPlateNumber(plateText);
+            if (heroPlateConf) heroPlateConf.textContent = `${plateConf}%`;
+        } else {
+            resultPlateString.textContent = 'NO PLATE DETECTED';
+            resultPlateMatchStatus.className = 'status-chip chip-warning';
+            resultPlateMatchStatus.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Low Contrast';
+            resultConfidenceStat.textContent = 'Confidence: --';
+        }
 
-        // Gauge 2: Circular Fluid Level (OCR Confidence)
-        const ocrConf = plate.ocr.confidence !== null ? Math.round(plate.ocr.confidence * 100) : 0;
-        valOcrConfNum.textContent = plate.ocr.confidence !== null ? `${ocrConf}%` : 'N/A';
-        fluidWaveBg.style.height = `${Math.min(100, Math.max(0, ocrConf))}%`;
+        // 4. Vehicle Intelligence
+        const intel = data.vehicle_intelligence || {};
+        const make = intel.make || 'Detected Vehicle';
+        const model = intel.model || '';
+        resultVehicleMake.textContent = model ? `${make} ${model}` : make;
+        resultBodyType.textContent = intel.body_style || 'Passenger Vehicle';
+
+        // Color Profile
+        const colorName = intel.color?.name || 'Standard Coat';
+        const colorHex = intel.color?.hex || '#C85A32';
+        resultColorName.textContent = colorName;
+        resultColorDot.style.backgroundColor = colorHex;
+
+        // Camera Heading / Angle
+        resultHeading.textContent = intel.camera_angle || 'Front Facing';
+
+        // Bounding Box Coordinates
+        if (primaryPlate?.bounding_box) {
+            const bbox = primaryPlate.bounding_box;
+            resultBboxCode.textContent = `[x1: ${bbox.x}, y1: ${bbox.y}, x2: ${bbox.x2 || (bbox.x + bbox.width)}, y2: ${bbox.y2 || (bbox.y + bbox.height)}]`;
+        } else {
+            resultBboxCode.textContent = '[x: 0, y: 0, w: 0, h: 0]';
+        }
     }
 
-    // Filter pills interaction
-    filterPills.forEach(pill => {
-        pill.addEventListener('click', () => {
-            filterPills.forEach(p => p.classList.remove('active'));
-            pill.classList.add('active');
-            const cat = (pill.getAttribute('data-filter') || '').toLowerCase();
-
-            presetCards.forEach(card => {
-                const sampleName = (card.getAttribute('data-sample') || '').toLowerCase();
-                const cardText = card.textContent.toLowerCase();
-                if (cat === 'all') {
-                    card.style.display = 'flex';
-                } else if (cat === 'sedan' && (sampleName.includes('jaguar') || sampleName.includes('sedan') || cardText.includes('sedan') || cardText.includes('jaguar'))) {
-                    card.style.display = 'flex';
-                } else if (cat === 'sports' && (sampleName.includes('lamborghini') || sampleName.includes('suv') || cardText.includes('aventador') || cardText.includes('sports'))) {
-                    card.style.display = 'flex';
-                } else if ((cat === 'vintage' || cat === 'classic') && (sampleName.includes('vintage') || sampleName.includes('classic') || cardText.includes('vintage') || cardText.includes('padmini'))) {
-                    card.style.display = 'flex';
-                } else if (cat === 'suv' && (sampleName.includes('suv') || sampleName.includes('traffic'))) {
-                    card.style.display = 'flex';
-                } else {
-                    card.style.display = 'none';
-                }
-            });
+    // -------------------------------------------------------------
+    // Image View Toggle (Annotated vs Original)
+    // -------------------------------------------------------------
+    if (btnShowAnnotated && btnShowOriginal) {
+        btnShowAnnotated.addEventListener('click', () => {
+            btnShowAnnotated.classList.add('active');
+            btnShowOriginal.classList.remove('active');
+            if (annotatedImageSrc) {
+                resultAnnotatedImage.src = annotatedImageSrc;
+            }
         });
-    });
 
-    // Real-time search filter for quick fleet presets
-    if (globalSearchInput) {
-        globalSearchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
-            presetCards.forEach(card => {
-                const text = card.textContent.toLowerCase();
-                const sample = (card.getAttribute('data-sample') || '').toLowerCase();
-                if (!query || text.includes(query) || sample.includes(query)) {
-                    card.style.display = 'flex';
-                } else {
-                    card.style.display = 'none';
-                }
-            });
+        btnShowOriginal.addEventListener('click', () => {
+            btnShowOriginal.classList.add('active');
+            btnShowAnnotated.classList.remove('active');
+            if (originalImageSrc) {
+                resultAnnotatedImage.src = originalImageSrc;
+            }
         });
     }
 
-    // Helper: format bytes
-    function formatBytes(bytes, decimals = 1) {
-        if (!+bytes) return '0 B';
+    // -------------------------------------------------------------
+    // Helper Utilities
+    // -------------------------------------------------------------
+    function formatPlateNumber(raw) {
+        if (!raw) return '-- ---- ----';
+        const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, ' ').trim();
+        // Insert clean spacing if standard Indian format
+        if (cleaned.length >= 8 && !cleaned.includes(' ')) {
+            return `${cleaned.slice(0, 2)} ${cleaned.slice(2, 4)} ${cleaned.slice(4, 6)} ${cleaned.slice(6)}`;
+        }
+        return cleaned;
+    }
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
         const k = 1024;
-        const dm = decimals < 0 ? 0 : decimals;
         const sizes = ['B', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-    }
-
-    // Keyboard shortcut ⌘K or Ctrl+K for search
-    window.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-            e.preventDefault();
-            globalSearchInput.focus();
-        }
-    });
-
-    // Dock quick actions
-    const dockScanBtn = document.getElementById('dockScanBtn');
-    if (dockScanBtn) {
-        dockScanBtn.addEventListener('click', () => imageInput.click());
-    }
-    const dockFleetBtn = document.getElementById('dockFleetBtn');
-    if (dockFleetBtn) {
-        dockFleetBtn.addEventListener('click', () => {
-            const firstPreset = document.querySelector('.fleet-preset-card');
-            if (firstPreset) firstPreset.click();
-        });
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
     }
 });
