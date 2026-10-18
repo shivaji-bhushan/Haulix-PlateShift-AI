@@ -28,3 +28,7 @@ desktop.ini
 models/.cache/
 models/huggingface/
 models/best.pt
+
+# Independent Projects
+cyberguard_ai/
+
